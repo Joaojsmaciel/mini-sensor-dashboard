@@ -1,0 +1,10 @@
+# Versões fixas e testadas no Windows 11 com o Smart App Control ATIVADO.
+# Atenção: o PyQt6 6.12.1 tem o QtWidgets.pyd bloqueado pelo Smart App Control
+# ("Uma política de Controle de Aplicativo bloqueou este arquivo"). Só atualize
+# estas versões depois de testar.
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.2
+PyQt6-sip==13.13.1
+pyqtgraph==0.14.0
+pyserial==3.5
+numpy==2.5.5

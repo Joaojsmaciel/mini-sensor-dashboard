@@ -1,0 +1,19 @@
+# Ambiente virtual Python (criado por run.bat / instalar_dependencias.bat)
+.venv/
+
+# Pacote offline gerado por preparar_pacote_offline.bat (~345 MB)
+dependencias/
+
+# Logs de instalação
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Arduino / editores / sistema
+build/
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

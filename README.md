@@ -9,9 +9,9 @@ Funciona 100% local: sem Wi-Fi, sem nuvem, sem Firebase.
 ## Visão geral
 
 ```
- DS18B20 ──D2─┐                   USB Serial 115200 baud            ┌─ Dashboard PyQt6
-              ├─ Arduino Uno/Leo ───── JSON por linha ─────► PC ────┤  gauge, gráficos,
- SW-420  ──D7─┘   (firmware)      {"temperature":28.6,...}          └─ estatísticas
+ DS18B20 ──D2─┐                USB Serial 115200 8N1               ┌─ Dashboard PyQt6
+              ├─ Arduino Uno/Leo ◄──── Modbus RTU ────► PC ────────┤  gauge, gráficos,
+ SW-420  ──D7─┘  (escravo nº 1)      (PC = mestre)                  └─ estatísticas
 ```
 
 | Sensor | Função | Pino |
@@ -45,9 +45,10 @@ mini-dashboard/
 │   │   └── styles.py               Tema escuro (paleta, fontes, QSS)
 │   ├── services/
 │   │   ├── serial_service.py       Thread serial, detecção de portas, erros
+│   │   ├── modbus_rtu.py           Mestre Modbus RTU: CRC16, requisição e validação de resposta
 │   │   └── data_processor.py       Estatísticas, históricos, eventos, taxa
 │   ├── models/
-│   │   └── sensor_data.py          Modelo e validação do protocolo JSON
+│   │   └── sensor_data.py          Modelo e decodificação dos registradores Modbus
 │   └── utils/
 │       └── configuration.py        Parâmetros centralizados
 ├── docs/
@@ -61,7 +62,7 @@ mini-dashboard/
 ├── tests/
 │   └── test_protocolo.py           Testes automáticos (sem hardware)
 ├── tools/
-│   └── diagnostico_serial.py       Monitor serial de linha de comando
+│   └── diagnostico_serial.py       Diagnóstico Modbus de linha de comando
 ├── scripts/
 │   ├── config_instalacao.ps1       Versões e URLs fixadas (compartilhado)
 │   ├── instalar_dependencias.ps1   Instalador (online ou offline)
@@ -80,9 +81,9 @@ O firmware fica em `arduino/sensor_monitor/` (e não direto em `arduino/`) porqu
 **Firmware**
 - Compatível com **Arduino Uno e Leonardo**; aguarda a USB nativa do Leonardo por até 3 s, sem travar.
 - **Sem `delay()`**: conversão assíncrona do DS18B20 (pedido a cada 1 s, leitura após ~750 ms) e amostragem do SW-420 a cada 20 ms.
-- **Tratamento de falhas**: −127 °C (sensor ausente), 85 °C de reset, valores fora da faixa e perda do sensor, com nova busca automática a cada 5 s. Em caso de falha envia `null`, **nunca um valor inventado**.
+- **Tratamento de falhas**: −127 °C (sensor ausente), 85 °C de reset, valores fora da faixa e perda do sensor, com nova busca automática a cada 5 s. Em caso de falha informa "sem leitura válida" (`0x8000`), **nunca um valor inventado**.
 - **Polaridade do SW-420 configurável** (`SW420_ACTIVE_LEVEL`).
-- Mensagens a cada 200 ms, mais uma imediata quando uma vibração começa. Depuração desligada por padrão; quando ligada, usa linhas iniciadas por `#`, que o dashboard ignora.
+- **Escravo Modbus RTU** (endereço 1): não envia nada por conta própria, só responde às consultas do dashboard. Sem modo de depuração por texto, que corromperia os frames; o diagnóstico usa o registrador STATUS e `tools/diagnostico_serial.py`.
 
 **Dashboard**
 - Cabeçalho com indicador USB, seleção de porta (★ = provável Arduino), Conectar/Desconectar e estado da conexão.
@@ -93,19 +94,33 @@ O firmware fica em `arduino/sensor_monitor/` (e não direto em `arduino/`) porqu
 - Comunicação em **thread separada**; detecta desconexão do cabo e porta ocupada; reconexão manual; aviso claro de **SEM DADOS** após 3 s sem mensagens.
 - Layout responsivo com 3, 2 ou 1 coluna, conforme a largura da janela.
 
-## Protocolo
+## Protocolo Modbus RTU
 
-```json
-{"temperature":28.60,"vibration":1,"timestamp":1200}
-```
-Uma mensagem por linha (`\n`) a 115200 baud. `temperature` é `null` quando o DS18B20 falha. Especificação completa no [GUIA_TESTES.md](docs/GUIA_TESTES.md#5-referência-do-protocolo).
+O dashboard (PC) é o **mestre** e consulta o Arduino, que é o **escravo** de endereço **1**, pelo mesmo cabo USB / porta COM.
+
+| Parâmetro | Valor |
+|---|---|
+| Comunicação | 115200 baud, 8N1 (8 bits, sem paridade, 1 stop bit) |
+| Consulta | Funções 0x04 (Read Input Registers) ou 0x03 (Read Holding Registers), mesma tabela, somente leitura |
+| Polling | Os 6 registradores numa única requisição a cada 100 ms (~10 leituras/s); timeout de resposta de 150 ms |
+
+| Endereço | Nome | Conteúdo |
+|---|---|---|
+| 0 | TEMPERATURA | int16 com sinal, em centésimos de °C (2860 = 28,60 °C); `0x8000` (−32768) = sem leitura válida |
+| 1 | VIBRAÇÃO | 0 = normal, 1 = vibração detectada |
+| 2 | UPTIME_ALTO | 16 bits altos de `millis()` |
+| 3 | UPTIME_BAIXO | 16 bits baixos de `millis()` |
+| 4 | STATUS | bit 0 = DS18B20 detectado no barramento; demais bits 0 |
+| 5 | VERSÃO_PROTOCOLO | 1 (o dashboard recusa outra versão) |
+
+Especificação completa no [GUIA_TESTES.md](docs/GUIA_TESTES.md#5-referência-do-protocolo).
 
 ## Configuração
 
 | Onde | O quê |
 |---|---|
-| `sensor_monitor.ino` | Polaridade do SW-420, intervalos, tempo de retenção da vibração, modo de depuração |
-| `app/utils/configuration.py` | Baud rate, timeout de "sem dados", janelas dos gráficos, faixa e limites de alerta do gauge, tamanhos da janela |
+| `sensor_monitor.ino` | Polaridade do SW-420, intervalos, tempo de retenção da vibração, endereço do escravo Modbus |
+| `app/utils/configuration.py` | Baud rate, intervalo e timeout do polling Modbus, timeout de "sem dados", janelas dos gráficos, faixa e limites de alerta do gauge, tamanhos da janela |
 
 ## Requisitos
 

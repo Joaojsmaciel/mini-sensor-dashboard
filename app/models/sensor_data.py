@@ -1,37 +1,50 @@
-"""Modelo de dados e validação do protocolo JSON enviado pelo Arduino.
+"""Modelo de dados e decodificação dos registradores Modbus lidos do Arduino.
 
-Formato esperado (uma mensagem por linha):
-    {"temperature":28.6,"vibration":1,"timestamp":1200}
+Mapa de registradores (base 0, 16 bits; deve corresponder ao firmware):
+    0  TEMPERATURA       int16, centésimos de °C; 0x8000 = sem leitura válida
+    1  VIBRAÇÃO          0 = normal, 1 = vibração detectada
+    2  UPTIME_ALTO       16 bits altos de millis()
+    3  UPTIME_BAIXO      16 bits baixos de millis()
+    4  STATUS            bit 0 = DS18B20 detectado no barramento
+    5  VERSÃO_PROTOCOLO  1
 
-``temperature`` pode ser ``null`` quando o firmware não conseguiu ler o
-DS18B20. Qualquer outro desvio do formato torna a mensagem inválida.
+Qualquer valor fora do esperado torna a leitura inválida.
 """
 
 from __future__ import annotations
 
-import json
-import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence
 
 from utils.configuration import TEMPERATURE_MAX_VALID_C, TEMPERATURE_MIN_VALID_C
 
-REQUIRED_FIELDS = ("temperature", "vibration", "timestamp")
+REG_TEMPERATURE = 0
+REG_VIBRATION = 1
+REG_UPTIME_HIGH = 2
+REG_UPTIME_LOW = 3
+REG_STATUS = 4
+REG_PROTOCOL_VERSION = 5
+REGISTER_COUNT = 6
+
+TEMPERATURE_INVALID = 0x8000
+STATUS_SENSOR_PRESENT = 0x0001
+PROTOCOL_VERSION = 1
 
 
 class ProtocolError(ValueError):
-    """Mensagem recebida não segue o protocolo esperado."""
+    """Registradores recebidos não seguem o protocolo esperado."""
 
 
 @dataclass(frozen=True)
 class SensorReading:
-    """Uma mensagem válida recebida do Arduino."""
+    """Uma leitura válida obtida do Arduino."""
 
     temperature: Optional[float]   # °C, ou None se o sensor falhou
     vibration: int                 # 0 ou 1
     device_timestamp_ms: int       # millis() do Arduino
     received_at: float             # time.time() do PC (eixo de horário do gráfico)
     received_monotonic: float      # time.monotonic() (timeouts e taxas; imune a ajuste de relógio)
+    sensor_present: bool = True    # DS18B20 detectado no barramento (registrador STATUS)
 
     @property
     def temperature_valid(self) -> bool:
@@ -42,56 +55,44 @@ class SensorReading:
         return self.vibration == 1
 
 
-def _is_number(value: object) -> bool:
-    # bool é subclasse de int em Python; true/false não são números válidos aqui.
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def parse_sensor_line(line: str, received_at: float,
-                      received_monotonic: Optional[float] = None) -> SensorReading:
-    """Valida uma linha de texto e a converte em :class:`SensorReading`.
+def decode_registers(registers: Sequence[int], received_at: float,
+                     received_monotonic: Optional[float] = None) -> SensorReading:
+    """Valida os registradores lidos e os converte em :class:`SensorReading`.
 
     ``received_monotonic`` assume ``received_at`` quando omitido (útil em testes).
     Lança :class:`ProtocolError` com uma descrição curta do problema.
     """
-    text = line.strip()
-    if not text:
-        raise ProtocolError("linha vazia")
-    if not (text.startswith("{") and text.endswith("}")):
-        raise ProtocolError("não é um objeto JSON completo")
+    if len(registers) != REGISTER_COUNT:
+        raise ProtocolError(f"esperados {REGISTER_COUNT} registradores, recebidos {len(registers)}")
+    if any(not isinstance(value, int) or not 0 <= value <= 0xFFFF for value in registers):
+        raise ProtocolError("registrador fora de 16 bits")
 
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ProtocolError(f"JSON malformado ({exc.msg})") from None
+    version = registers[REG_PROTOCOL_VERSION]
+    if version != PROTOCOL_VERSION:
+        raise ProtocolError(
+            f"firmware incompatível (protocolo v{version}, esperado v{PROTOCOL_VERSION})")
 
-    if not isinstance(payload, dict):
-        raise ProtocolError("JSON não é um objeto")
-
-    missing = [field for field in REQUIRED_FIELDS if field not in payload]
-    if missing:
-        raise ProtocolError(f"campos ausentes: {', '.join(missing)}")
-
-    temperature = payload["temperature"]
-    if temperature is not None:
-        if not _is_number(temperature) or not math.isfinite(float(temperature)):
-            raise ProtocolError("temperature não numérica")
-        temperature = float(temperature)
+    raw_temperature = registers[REG_TEMPERATURE]
+    temperature: Optional[float] = None
+    if raw_temperature != TEMPERATURE_INVALID:
+        signed = raw_temperature - 0x10000 if raw_temperature & 0x8000 else raw_temperature
+        temperature = signed / 100.0
         if not TEMPERATURE_MIN_VALID_C <= temperature <= TEMPERATURE_MAX_VALID_C:
-            raise ProtocolError(f"temperature fora da faixa ({temperature:.2f} °C)")
+            raise ProtocolError(f"temperatura fora da faixa ({temperature:.2f} °C)")
 
-    vibration = payload["vibration"]
-    if not _is_number(vibration) or vibration not in (0, 1):
-        raise ProtocolError("vibration deve ser 0 ou 1")
+    vibration = registers[REG_VIBRATION]
+    if vibration not in (0, 1):
+        raise ProtocolError("vibração deve ser 0 ou 1")
 
-    timestamp = payload["timestamp"]
-    if not _is_number(timestamp) or timestamp < 0 or float(timestamp) != int(timestamp):
-        raise ProtocolError("timestamp inválido")
+    status = registers[REG_STATUS]
+    if status & ~STATUS_SENSOR_PRESENT:
+        raise ProtocolError(f"bits de status desconhecidos (0x{status:04X})")
 
     return SensorReading(
         temperature=temperature,
-        vibration=int(vibration),
-        device_timestamp_ms=int(timestamp),
+        vibration=vibration,
+        device_timestamp_ms=(registers[REG_UPTIME_HIGH] << 16) | registers[REG_UPTIME_LOW],
         received_at=received_at,
         received_monotonic=received_at if received_monotonic is None else received_monotonic,
+        sensor_present=bool(status & STATUS_SENSOR_PRESENT),
     )

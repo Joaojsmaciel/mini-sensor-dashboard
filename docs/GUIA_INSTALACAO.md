@@ -68,6 +68,7 @@ A pasta `sensor_monitor` tem o mesmo nome do arquivo `.ino` porque a Arduino IDE
 2. **Ferramentas → Porta →** selecione a porta do Arduino (veja o Passo 7).
 3. Clique em **Carregar** (seta →). Aguarde a mensagem **"Carregamento concluído"**.
 4. **Antes de carregar:** desconecte o dashboard (botão *Desconectar*) se ele estiver aberto. A gravação precisa da porta COM livre.
+5. **Ao atualizar o projeto**, regrave sempre o firmware junto com o dashboard: os dois precisam falar o mesmo protocolo (Modbus RTU).
 
 **Leonardo:** se o upload falhar com "porta não encontrada", clique em *Carregar* e, assim que aparecer "Carregando…", aperte uma vez o botão **RESET** da placa.
 
@@ -118,7 +119,8 @@ Dê dois cliques em **`run.bat`** na pasta do projeto.
 2. Clique em **Conectar**.
 3. O estado muda para **CONECTANDO…**, depois **AGUARDANDO DADOS** e por fim **RECEBENDO DADOS** (LED USB verde piscando).
    - No **Uno**, a placa reinicia ao abrir a porta, por isso os dados chegam após cerca de 2 s. Isso é normal.
-4. Feche o **Monitor Serial** da Arduino IDE se estiver aberto: só um programa pode usar a porta por vez.
+4. Feche o **Monitor Serial** da Arduino IDE se estiver aberto: só um programa pode usar a porta por vez. O dashboard fala **Modbus RTU** (115200 baud, 8N1) com o Arduino, que é o escravo de endereço 1; o Monitor Serial não serve para ver as leituras, pois os dados são binários e só saem quando o dashboard os consulta. Para conferir a comunicação sem a interface gráfica, use `tools\diagnostico_serial.py` (veja o [GUIA_TESTES.md](GUIA_TESTES.md)).
+5. Se o painel mostrar **firmware antigo (JSON)**, regrave o firmware (Passo 6): ele ainda é a versão anterior ao Modbus.
 
 ## Passo 11: testar os sensores
 - **Temperatura:** segure o DS18B20 entre os dedos. O valor sobe gradualmente em 10 a 30 s.

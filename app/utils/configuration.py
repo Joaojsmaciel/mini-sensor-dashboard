@@ -14,12 +14,13 @@ APP_SUBTITLE = "Telemetria local · Arduino USB"
 APP_VERSION = "1.0.0"
 
 # ---------------------------------------------------------------------------
-# Comunicação serial (deve corresponder ao firmware)
+# Comunicação serial: Modbus RTU, 8N1 (deve corresponder ao firmware)
 # ---------------------------------------------------------------------------
 BAUD_RATE = 115200
-SERIAL_READ_TIMEOUT_S = 0.1      # timeout de cada leitura na thread serial
-MAX_LINE_LENGTH = 256            # linhas maiores são descartadas como corrompidas
-DATA_TIMEOUT_S = 3.0             # sem mensagens por este tempo -> "SEM DADOS"
+MODBUS_SLAVE_ID = 1              # endereço do Arduino no barramento
+MODBUS_POLL_INTERVAL_S = 0.1     # uma consulta a cada 100 ms (~10 leituras/s)
+MODBUS_RESPONSE_TIMEOUT_S = 0.15 # sem resposta neste tempo -> consulta perdida
+DATA_TIMEOUT_S = 3.0             # sem leituras válidas por este tempo -> "SEM DADOS"
 CONNECT_SLOW_WARNING_S = 8.0     # aviso se a abertura da porta demorar mais que isso
 PORT_SCAN_INTERVAL_MS = 2000     # atualização automática da lista de portas
 
@@ -34,7 +35,7 @@ ARDUINO_USB_VIDS = {
 }
 
 # ---------------------------------------------------------------------------
-# Protocolo
+# Protocolo (mapa de registradores no firmware e em models/sensor_data.py)
 # ---------------------------------------------------------------------------
 TEMPERATURE_MIN_VALID_C = -55.0  # faixa física do DS18B20
 TEMPERATURE_MAX_VALID_C = 125.0
